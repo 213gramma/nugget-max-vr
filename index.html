@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#171022">
+<title>Nugget vs Max — Twiddle Fingers VR</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,Arial,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at top,#38224e,#110d19 70%);color:#fff;min-height:100vh;text-align:center}
+header{padding:16px 12px 6px}
+h1{font-size:clamp(25px,5vw,44px);margin:4px 0;color:#ffd35c;text-shadow:0 3px #8c451c}
+.subtitle{color:#e8d9f4;margin:4px}
+main{max-width:980px;margin:auto;padding:8px 14px 28px}
+.selectors{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:12px auto}
+button{font:700 16px system-ui;border:2px solid #fff5;border-radius:14px;padding:12px 16px;color:#fff;background:#58347a;cursor:pointer;touch-action:manipulation}
+button:focus-visible{outline:3px solid #ffe16b;outline-offset:3px}
+button.primary{background:#d96a20;color:#180d08;border-color:#ffd18a}
+button:disabled{opacity:.5}
+#stage{position:relative;background:#0b0b14;border:3px solid #76519a;border-radius:18px;overflow:hidden;max-width:900px;margin:12px auto;min-height:280px}
+#game{display:block;width:100%;height:auto;aspect-ratio:16/9}
+#hud{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;background:#21172d;font-weight:700}
+#message{min-height:26px;color:#ffe18a;padding:5px}
+#controls{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:8px;max-width:540px;margin:12px auto}
+.arrow{font-size:30px;min-height:64px;background:#3a2b50;border:2px solid #b89ad6;padding:6px}
+.arrow:active{background:#d96a20;transform:scale(.97)}
+.help{color:#d9cde4;font-size:14px;line-height:1.5;max-width:760px;margin:12px auto}
+#vrhost{height:1px}
+a{color:#ffd66c}
+@media(min-width:700px){#controls{max-width:460px}}
+</style>
+</head>
+<body>
+<header>
+<h1>🥜 NUGGET vs MAX 🎤</h1>
+<p class="subtitle">TWIDDLE FINGERS • Rhythm Battle • WebXR VR</p>
+</header>
+<main>
+<div class="selectors" aria-label="Song selection">
+<button id="solo" class="primary">🎵 Max Solo</button>
+<button id="duet">🎤 Max vs Nugget</button>
+<button id="start" class="primary">▶ Start song</button>
+<button id="vr">🥽 Enter VR</button>
+</div>
+<div id="stage">
+<canvas id="game" width="960" height="540" aria-label="Four lane rhythm game"></canvas>
+<div id="hud"><span id="songname">Song: Max Solo</span><span>Score: <b id="score">0</b></span><span>Misses: <b id="misses">0</b></span></div>
+</div>
+<div id="message" aria-live="polite">Choose a song, press Start, then hit the arrows!</div>
+<div id="controls" aria-label="Touch arrow controls">
+<button class="arrow" data-lane="0" aria-label="Left">⬅️</button>
+<button class="arrow" data-lane="1" aria-label="Down">⬇️</button>
+<button class="arrow" data-lane="2" aria-label="Up">⬆️</button>
+<button class="arrow" data-lane="3" aria-label="Right">➡️</button>
+</div>
+<p class="help">Desktop: use the ← ↓ ↑ → keys. Phone/tablet: tap the four arrow buttons. VR: enter immersive VR and point a controller at an arrow pad, then press the trigger. Best played on a Quest browser over HTTPS (for example, GitHub Pages).</p>
+<div id="vrhost"></div>
+</main>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js';
+
+const songs=[
+ {name:'Max Solo',src:'assets/max-solo.mp3',bpm:112},
+ {name:'Max vs Nugget',src:'assets/max-vs-nugget.mp3',bpm:112}
+];
+let songIndex=0, audio=new Audio(), playing=false, startedAt=0, score=0, misses=0, notes=[], nextNote=0, beat=60/112, chartIndex=0;
+const patterns=[0,1,2,3,0,2,1,3,0,1,3,2,1,0,2,3,0,3,1,2,0,1,2,3];
+const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d');
+const nuggetImg=new Image(); nuggetImg.src='assets/nugget.webp';
+const maxImg=new Image(); maxImg.src='assets/max.webp';
+const scoreEl=document.querySelector('#score'),missEl=document.querySelector('#misses'),msg=document.querySelector('#message');
+const laneX=[310,423,536,649], laneNames=['LEFT','DOWN','UP','RIGHT'], symbols=['⬅','⬇','⬆','➡'];
+const songName=document.querySelector('#songname');
+function selectSong(i){songIndex=i; audio.pause();audio=new Audio(songs[i].src);audio.preload='auto';songName.textContent='Song: '+songs[i].name;document.querySelector('#solo').classList.toggle('primary',i===0);document.querySelector('#duet').classList.toggle('primary',i===1);reset();}
+document.querySelector('#solo').onclick=()=>selectSong(0);
+document.querySelector('#duet').onclick=()=>selectSong(1);
+function reset(){playing=false;notes=[];nextNote=0;chartIndex=0;score=0;misses=0;scoreEl.textContent='0';missEl.textContent='0';msg.textContent='Press Start when ready!';draw();}
+document.querySelector('#start').onclick=async()=>{if(playing)return;try{if(!audio.src)audio=new Audio(songs[songIndex].src);audio.currentTime=0;await audio.play();playing=true;startedAt=performance.now()/1000;nextNote=.9;chartIndex=0;score=0;misses=0;scoreEl.textContent='0';missEl.textContent='0';msg.textContent='Hit the arrows when they reach the glowing line!';}catch(e){msg.textContent='Tap Start again to allow audio playback.';}};
+function hit(lane){if(!playing)return;let best=-1,delta=999;for(let i=0;i<notes.length;i++){if(notes[i].lane===lane){let d=Math.abs(notes[i].at-(performance.now()/1000-startedAt));if(d<delta){delta=d;best=i;}}}if(best>=0&&delta<.42){notes.splice(best,1);score+=delta<.16?300:delta<.29?150:75;scoreEl.textContent=score;msg.textContent=delta<.16?'PERFECT! ✨':'NICE!';}else{msg.textContent='Missed the beat — try again!';}}
+document.querySelectorAll('.arrow').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();hit(+b.dataset.lane)}));
+const keys={ArrowLeft:0,ArrowDown:1,ArrowUp:2,ArrowRight:3};
+addEventListener('keydown',e=>{if(keys[e.key]!==undefined){e.preventDefault();hit(keys[e.key]);}});
+function draw(){ctx.clearRect(0,0,960,540);let g=ctx.createLinearGradient(0,0,0,540);g.addColorStop(0,'#21132d');g.addColorStop(1,'#080a14');ctx.fillStyle=g;ctx.fillRect(0,0,960,540);
+ctx.fillStyle='#f9d66b';ctx.font='bold 30px system-ui';ctx.textAlign='center';ctx.fillText('TWIDDLE FINGERS BATTLE',480,42);
+if(nuggetImg.complete)ctx.drawImage(nuggetImg,75,105,180,260);if(maxImg.complete)ctx.drawImage(maxImg,705,105,180,260);
+ctx.fillStyle='#ffd56b';ctx.font='bold 20px system-ui';ctx.fillText('YOU: NUGGET',165,390);ctx.fillText('MAX',795,390);
+ctx.fillStyle='#39294c';ctx.fillRect(270,80,420,410);
+for(let i=0;i<4;i++){let x=laneX[i];ctx.fillStyle='#58416e';ctx.fillRect(x-45,95,90,370);ctx.strokeStyle='#a78ac1';ctx.lineWidth=2;ctx.strokeRect(x-45,95,90,370);ctx.fillStyle='#fff';ctx.font='40px system-ui';ctx.fillText(symbols[i],x,452);ctx.fillStyle='#ffd56b';ctx.fillRect(x-42,380,84,5);}
+let t=playing?performance.now()/1000-startedAt:0;
+for(const n of notes){let y=380-(n.at-t)*170;ctx.fillStyle=['#f3c34f','#61d7ed','#a58cff','#f18a54'][n.lane];ctx.beginPath();ctx.roundRect(laneX[n.lane]-30,y-25,60,50,12);ctx.fill();ctx.fillStyle='#171022';ctx.font='bold 30px system-ui';ctx.fillText(symbols[n.lane],laneX[n.lane],y+10);}
+if(!playing){ctx.fillStyle='#ffffffcc';ctx.font='bold 24px system-ui';ctx.fillText('PRESS START TO PLAY',480,510);}
+}
+function frame(){requestAnimationFrame(frame);if(playing){let t=performance.now()/1000-startedAt;while(nextNote<t+2.25&&nextNote<(audio.duration||999)){let lane=patterns[chartIndex++%patterns.length];notes.push({lane,at:nextNote});nextNote+=beat*.82;}for(let i=notes.length-1;i>=0;i--){if(t-notes[i].at>.42){notes.splice(i,1);misses++;missEl.textContent=misses;}}if(audio.ended){playing=false;msg.textContent='Song finished! Final score: '+score+' 🎉';}}draw();updateVR();}
+requestAnimationFrame(frame);
+
+// Three-dimensional WebXR room
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x120d1c);
+const camera=new THREE.PerspectiveCamera(70,1,.1,100);camera.position.set(0,1.6,4.5);
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(640,360);renderer.xr.enabled=true;renderer.domElement.style.width='1px';renderer.domElement.style.height='1px';renderer.domElement.style.position='absolute';renderer.domElement.style.opacity='0';document.querySelector('#vrhost').appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x49315e,2));
+const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(1,4,3);scene.add(light);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(12,12),new THREE.MeshStandardMaterial({color:0x21172e,roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=-.1;scene.add(floor);
+const pads=[],padMeshes=[];
+const padColors=[0xf3c34f,0x61d7ed,0xa58cff,0xf18a54];
+for(let i=0;i<4;i++){let group=new THREE.Group();group.position.set((i-1.5)*.8,1.15,0);scene.add(group);
+let box=new THREE.Mesh(new THREE.BoxGeometry(.68,.68,.12),new THREE.MeshStandardMaterial({color:padColors[i],emissive:padColors[i],emissiveIntensity:.25,roughness:.4}));group.add(box);
+let label=new THREE.Sprite(new THREE.SpriteMaterial({map:makeTextTexture(symbols[i]),transparent:true}));label.scale.set(.5,.5,1);label.position.z=.08;group.add(label);pads.push(group);padMeshes.push(box);}
+function makeTextTexture(text){let c=document.createElement('canvas');c.width=128;c.height=128;let x=c.getContext('2d');x.font='bold 92px sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillStyle='#21132d';x.fillText(text,64,67);let t=new THREE.CanvasTexture(c);return t;}
+const vrNotes=[];
+function spawnVRNote(lane,at){let mesh=new THREE.Mesh(new THREE.BoxGeometry(.48,.48,.18),new THREE.MeshStandardMaterial({color:padColors[lane],emissive:padColors[lane],emissiveIntensity:.45}));mesh.position.set((lane-1.5)*.8,1.15,-4.5);scene.add(mesh);vrNotes.push({mesh,lane,at});}
+const raycaster=new THREE.Raycaster(),tempMatrix=new THREE.Matrix4(),controllers=[];
+for(let i=0;i<2;i++){const c=renderer.xr.getController(i);scene.add(c);c.addEventListener('select',()=>{tempMatrix.identity().extractRotation(c.matrixWorld);raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);let hits=raycaster.intersectObjects(padMeshes);if(hits.length){let lane=padMeshes.indexOf(hits[0].object);hit(lane);}});controllers.push(c);}
+document.querySelector('#vr').onclick=()=>{const btn=VRButton.createButton(renderer,{optionalFeatures:['local-floor','bounded-floor']});btn.click();msg.textContent='If the headset asks, allow VR access. Point at an arrow pad and press trigger.';};
+function updateVR(){let t=playing?performance.now()/1000-startedAt:0;
+while(playing&&vrNotes.length<notes.length+2){break;}
+for(let i=vrNotes.length-1;i>=0;i--){let n=vrNotes[i];let z=-4.5+(t-(n.at-1.65))*2.4;n.mesh.position.z=z;if(z>.15){scene.remove(n.mesh);vrNotes.splice(i,1);}}
+if(playing){for(const n of notes){if(!n.vrMade){spawnVRNote(n.lane,n.at);n.vrMade=true;}}}
+}
+renderer.setAnimationLoop(()=>{renderer.render(scene,camera);});
+addEventListener('resize',()=>{renderer.setSize(640,360);});
+selectSong(0);
+</script>
+</body>
+</html>
